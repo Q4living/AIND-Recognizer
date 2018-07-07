@@ -68,16 +68,68 @@ class SelectorBIC(ModelSelector):
     Bayesian information criteria: BIC = -2 * logL + p * logN
     """
 
+#     def select(self):
+#         """ select the best model for self.this_word based on
+#         BIC score for n between self.min_n_components and self.max_n_components
+
+#         :return: GaussianHMM object
+#         """
+#         warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+#         # TODO implement model selection based on BIC scores
+#         raise NotImplementedError
+
+    @staticmethod
+    def BIC(L, p, N):
+        """ compute Bayesian information criteria using
+        this formula:
+        BIC = -2 * logL + p * logN
+        Note: in this function L is already log so
+        we do not use np.log()
+        """
+
+        BIC = -2 * L + p * np.log(N)
+
+        return BIC
+
     def select(self):
         """ select the best model for self.this_word based on
         BIC score for n between self.min_n_components and self.max_n_components
-
         :return: GaussianHMM object
         """
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+        # compute range of n (including both numbers)
+        components_diff = self.max_n_components - self.min_n_components + 1
+        range_n = np.linspace(self.min_n_components, self.max_n_components,
+                              components_diff)
+        range_n = [int(i) for i in range_n]
+
+        for idx, n in enumerate(range_n):
+            # estimate model for n
+            try:
+                model_n = self.base_model(n)
+                # compute likelihood
+                L = model_n.score(self.X, self.lengths)
+                # number of data points and features
+                N, f = self.X.shape # N - data points, f - features
+                # number of parameters
+                #p = n * (n-1) + 2 * self.X.shape[1] * n
+                p = n**2 + 2 * n * f - 1
+                # compute BIC score
+                BIC = SelectorBIC.BIC(L, p, N)
+            except:
+                BIC = np.inf
+            # for the first run, crash if first run throws an exception
+            if idx == 0:
+                best_BIC = BIC
+                best_num_components = n
+            else:
+                if best_BIC < BIC:
+                    best_BIC = BIC
+                    best_num_components = n
+
+        return self.base_model(best_num_components)
 
 
 class SelectorDIC(ModelSelector):
@@ -90,11 +142,63 @@ class SelectorDIC(ModelSelector):
     DIC = log(P(X(i)) - 1/(M-1)SUM(log(P(X(all but i))
     '''
 
+#     def select(self):
+#         warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+#         # TODO implement model selection based on DIC scores
+#         raise NotImplementedError
+    
+    @staticmethod
+    def DIC(hmm_model, words, this_word, hwords, logL):
+        """purpose: calculate DIC
+        """
+
+        word_scores = 0
+        competing_words = list(words)
+        competing_words.remove(this_word)
+        # sum over all words except i-th word
+        for word in competing_words:
+            X, lengths = hwords[word]
+            word_scores += hmm_model.score(X, lengths)
+
+        # calculate score
+        DIC = logL - word_scores / len(competing_words)
+
+        return DIC
+
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        components_diff = self.max_n_components - self.min_n_components + 1
+        range_n = np.linspace(self.min_n_components, self.max_n_components,
+                              components_diff)
+        range_n = [int(i) for i in range_n]
+
+        for idx, n in enumerate(range_n):
+            # build model
+            try:
+                hmm_model = GaussianHMM(n_components=n, covariance_type="diag", n_iter=1000,
+                                        random_state=self.random_state, verbose=False).fit(
+                                        self.X, self.lengths)
+                # calculate likelihood
+                logL = hmm_model.score(self.X, self.lengths)
+
+                DIC = SelectorDIC.DIC(hmm_model, self.words, self.this_word,
+                                    self.hwords, logL)
+            except:
+                DIC = -np.inf
+            # for the first run, it will crash if first attempt
+            # to build model will crash
+            if idx == 0:
+                best_DIC = DIC
+                best_num_components = n
+            else:
+                if best_DIC < DIC:
+                    best_DIC = DIC
+                    best_num_components = n
+
+        return self.base_model(best_num_components)
 
 
 class SelectorCV(ModelSelector):
@@ -104,6 +208,32 @@ class SelectorCV(ModelSelector):
 
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
-
         # TODO implement model selection using CV
-        raise NotImplementedError
+        # raise NotImplementedError
+
+        kf = KFold(min(4, len(self.sequences[0])))
+        log_Likelihood_dict = {}
+
+        for state in range(self.min_n_components, self.max_n_components + 1):
+            log_Likelihood = []
+            for cv_train_idx, cv_test_i in kf.split(self.sequences[0]):
+                try:
+                    train_x, train_y = combine_sequences(cv_train_i, self.sequences)
+                    test_x, test_y = combine_sequences(cv_test_i, self.sequences)
+                    log_Likelihood.append(self.base_model(state).score(test_x, test_y))
+                    log_Likelihood_dict[state] = np.mean(logL)
+
+                except Exception as e:
+                    # print(e)
+                    pass
+
+        # select the best model by choosing max mean likelihood
+        if len(log_Likelihood_dict) > 0:
+            best_state = min(log_Likelihood_dict, key=log_Likelihood_dict.get)
+        else:
+            best_state = self.n_constant
+        
+        # return the mode with best_state of minimal loglikelihood
+        return self.base_model(best_state)
+
+        
