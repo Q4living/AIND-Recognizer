@@ -86,8 +86,8 @@ class SelectorBIC(ModelSelector):
                 
                 # number of data points and features
                 data_n, features = self.X.shape
-                p = state**2 + 2 * state * features - 1
-                bic = -2 * log_Likelihood + p * np.log(data_n)
+                param_n = state**2 + 2 * state * features - 1
+                bic = -2 * log_Likelihood + param_n * np.log(data_n)
                 
             except Exception as e:
 #                 print(e)
